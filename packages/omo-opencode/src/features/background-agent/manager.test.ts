@@ -7603,6 +7603,7 @@ describe("BackgroundManager.handleEvent - early session.idle deferral", () => {
 
       await tryCompleteTaskForTest(manager, task)
       expect(task.status).toBe("completed")
+      expect(messagesCallCount).toBe(1)
 
       // Advance time so deferred callback (if any) sees elapsed >= MIN_IDLE_TIME_MS
       Date.now = () => baseNow + (MIN_IDLE_TIME_MS + 10)
@@ -7610,7 +7611,7 @@ describe("BackgroundManager.handleEvent - early session.idle deferral", () => {
       //#then - deferred callback should be a no-op
       await new Promise((resolve) => setTimeout(resolve, remainingMs + 80))
       expect(task.status).toBe("completed")
-      expect(messagesCallCount).toBe(0)
+      expect(messagesCallCount).toBe(1)
     } finally {
       Date.now = realDateNow
       manager.shutdown()
@@ -7863,7 +7864,7 @@ describe("BackgroundManager.handleEvent - non-tool event lastUpdate", () => {
     expect(task.status).toBe("running")
   })
 
-  test("should complete idle task without fetching messages after output event was observed", async () => {
+  test("should read the final assistant finish once when an idle task already has observed output", async () => {
     //#given - a running task with observed output from message part events
     let messagesCallCount = 0
     let todoCallCount = 0
@@ -7914,10 +7915,10 @@ describe("BackgroundManager.handleEvent - non-tool event lastUpdate", () => {
     //#when - session.idle fires after output event was already observed
     manager.handleEvent({ type: "session.idle", properties: { sessionID } })
 
-    //#then - task completes without refetching session.messages
+    //#then - output cache skips validation, and completion still reads the final finish
     await waitUntil(() => task.status === "completed", 600)
     expect(task.status).toBe("completed")
-    expect(messagesCallCount).toBe(0)
+    expect(messagesCallCount).toBe(1)
     expect(todoCallCount).toBe(1)
 
     manager.shutdown()

@@ -87,6 +87,7 @@ import {
   MIN_SESSION_GONE_POLLS,
   verifySessionExists as verifySessionStillExists,
 } from "./session-existence"
+import { getOutputLimitStop } from "./output-limit-stop"
 import { getStoppedSessionError, MIN_ERRORED_IDLE_POLLS } from "./session-stopped-on-error"
 import { handleSessionIdleBackgroundEvent } from "./session-idle-event-handler"
 import {
@@ -281,6 +282,7 @@ export class BackgroundManager {
   private readonly parentWakeNotifier: ParentWakeNotifier
   private parentWakeTextDeltaBuffers: Map<string, string> = new Map()
   private observedOutputSessions: Set<string> = new Set()
+  private outputLimitStopBySession: Map<string, string | undefined> = new Map()
   private observedIncompleteTodosBySession: Map<string, boolean> = new Map()
   private rootDescendantCounts: Map<string, number>
   private preStartDescendantReservations: Set<string>
@@ -1666,6 +1668,7 @@ The fallback retry session is now created and can be inspected directly.
 
   private clearSessionOutputObserved(sessionID: string): void {
     this.observedOutputSessions.delete(sessionID)
+    this.outputLimitStopBySession.delete(sessionID)
   }
 
   private clearSessionTodoObservation(sessionID: string): void {
@@ -2355,6 +2358,7 @@ The task was re-queued on a fallback model after a retryable failure.
    */
   private async validateSessionHasOutput(sessionID: string): Promise<boolean> {
     if (this.observedOutputSessions.has(sessionID)) {
+      this.outputLimitStopBySession.delete(sessionID)
       return true
     }
 
@@ -2364,6 +2368,7 @@ The task was re-queued on a fallback model after a retryable failure.
       }, this.directory)
 
       const messages = normalizeSDKResponse(response, [] as Array<{ info?: { role?: string } }>, { preferResponseOnMissingData: true })
+      this.outputLimitStopBySession.set(sessionID, getOutputLimitStop(messages))
 
       // Check for at least one assistant or tool message
       const hasAssistantOrToolMessage = messages.some(
@@ -2410,6 +2415,25 @@ The task was re-queued on a fallback model after a retryable failure.
       log("[background-agent] Error validating session output:", error)
       // On error, allow completion to proceed (don't block indefinitely)
       return true
+    }
+  }
+
+  private async readOutputLimitStop(sessionID: string): Promise<string | undefined> {
+    if (this.outputLimitStopBySession.has(sessionID)) {
+      const stop = this.outputLimitStopBySession.get(sessionID)
+      this.outputLimitStopBySession.delete(sessionID)
+      return stop
+    }
+
+    try {
+      const response = await messagesInDirectory(this.client, {
+        path: { id: sessionID },
+      }, this.directory)
+      const messages = normalizeSDKResponse(response, [] as unknown[], { preferResponseOnMissingData: true })
+      return getOutputLimitStop(messages)
+    } catch (error) {
+      log("[background-agent] Error reading session messages for output-limit check:", error)
+      return undefined
     }
   }
 
@@ -2663,6 +2687,23 @@ The task was re-queued on a fallback model after a retryable failure.
     // Guard: Check if task is still running (could have been completed by another path)
     if (task.status !== "running") {
       log("[background-agent] Task already completed, skipping:", { taskId: task.id, status: task.status, source })
+      return false
+    }
+
+    const outputLimitStop = task.sessionId
+      ? await this.readOutputLimitStop(task.sessionId)
+      : undefined
+    if (task.status !== "running") {
+      log("[background-agent] Task already completed, skipping:", { taskId: task.id, status: task.status, source })
+      return false
+    }
+    if (outputLimitStop) {
+      log("[background-agent] Session stopped at the output token limit, marking task as error:", {
+        taskId: task.id,
+        sessionID: task.sessionId,
+        error: outputLimitStop,
+      })
+      await this.failCrashedTask(task, outputLimitStop)
       return false
     }
 
@@ -3085,6 +3126,7 @@ The task was re-queued on a fallback model after a retryable failure.
   }
 
   private async failCrashedTask(task: BackgroundTask, errorMessage: string): Promise<void> {
+    if (task.status !== "running") return
     if (task.currentAttemptID) {
       finalizeAttempt(task, task.currentAttemptID, "error", errorMessage)
     } else {
@@ -3228,6 +3270,16 @@ The task was re-queued on a fallback model after a retryable failure.
               }
 
               task.consecutiveMissedPolls = 0
+            }
+            const outputLimitStop = await this.readOutputLimitStop(sessionID)
+            if (outputLimitStop) {
+              log("[background-agent] Session stopped at the output token limit with no deliverable output, marking task as error:", {
+                taskId: task.id,
+                sessionID,
+                error: outputLimitStop,
+              })
+              await this.failCrashedTask(task, outputLimitStop)
+              continue
             }
             const stoppedError = await this.readStoppedSessionError(sessionID)
             if (stoppedError) {

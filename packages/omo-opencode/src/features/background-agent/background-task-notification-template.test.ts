@@ -204,4 +204,30 @@ describe("buildBackgroundTaskNotificationText", () => {
       expect(notification).toContain("bg_xyz789")
     })
   })
+
+  describe("#given a background task that stopped at the output token limit", () => {
+    test("#when building the final notification #then it is reported as a failure instead of a normal completion", () => {
+      // given
+      const task = {
+        id: "bg_length",
+        description: "Stage: admin.el.md",
+        status: "error" as const,
+        error: "stopped at output limit (32000 tokens), no result",
+      }
+      const notification = buildBackgroundTaskNotificationText({
+        task,
+        duration: "8m 16s",
+        statusText: "ERROR",
+        allComplete: true,
+        remainingCount: 0,
+        completedTasks: [task],
+      })
+
+      // then
+      expect(notification).toContain("[ALL BACKGROUND TASKS FINISHED - 1 FAILED]")
+      expect(notification).toContain("[ERROR] - stopped at output limit (32000 tokens), no result")
+      expect(notification).not.toContain("[BACKGROUND TASK COMPLETED]")
+      expect(notification).not.toContain("**Completed:**")
+    })
+  })
 })
