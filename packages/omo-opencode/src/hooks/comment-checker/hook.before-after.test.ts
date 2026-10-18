@@ -115,6 +115,38 @@ describe("comment-checker mutation tool routing", () => {
     )
   })
 
+  it("#given edit tool with a camelCase edits array #when before and after hooks run #then it checks snake_case hunks", async () => {
+    // given
+    const hooks = createCommentCheckerHooks(undefined, cliRunner)
+    const input = { tool: "edit", sessionID: "ses_test", callID: "call_edit_edits" }
+    const oldString = "const value = 1\n"
+    const newString = "# Changed to double the value as requested\nconst value = 2\n"
+
+    // when
+    await hooks["tool.execute.before"](input, {
+      args: {
+        filePath: "/repo/src/aft-edit.ts",
+        edits: [{ oldString, newString }],
+      },
+    })
+    await hooks["tool.execute.after"](input, { title: "ok", output: "Success", metadata: {} })
+
+    // then
+    expect(processWithCli).toHaveBeenCalledTimes(1)
+    expect(processWithCli).toHaveBeenCalledWith(
+      input,
+      expect.objectContaining({
+        filePath: "/repo/src/aft-edit.ts",
+        edits: [{ old_string: oldString, new_string: newString }],
+        tool: "edit",
+      }),
+      expect.any(Object),
+      "/tmp/fake-comment-checker",
+      undefined,
+      expect.any(Function),
+    )
+  })
+
   it("#given non-mutation tool #when before and after hooks run #then it does not run the checker", async () => {
     // given
     const hooks = createCommentCheckerHooks(undefined, cliRunner)

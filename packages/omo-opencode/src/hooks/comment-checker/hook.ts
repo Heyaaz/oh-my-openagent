@@ -8,6 +8,7 @@ import {
   processWithCli,
   processApplyPatchEditsWithCli,
 } from "./cli-runner"
+import { readCheckerEdits } from "./checker-edits"
 import { extractApplyPatchEdits } from "@oh-my-opencode/comment-checker-core"
 import {
   registerPendingCall,
@@ -80,7 +81,7 @@ export function createCommentCheckerHooks(
       const content = output.args.content as string | undefined
       const oldString = (output.args.oldString ?? output.args.old_string) as string | undefined
       const newString = (output.args.newString ?? output.args.new_string) as string | undefined
-      const edits = output.args.edits as Array<{ old_string: string; new_string: string }> | undefined
+      const edits = readCheckerEdits(output.args.edits)
 
       debugLog("extracted filePath:", filePath)
 
