@@ -52,8 +52,10 @@ function editsHaveNewComments(edits: readonly CheckerStringEdit[]): boolean {
 }
 
 /**
- * `write` carries `content`. An `edit` may carry `oldString`/`newString` or an
- * `edits` array (camelCase or snake_case). The checker reads `content` for
+ * `write` carries `content`. A write over an existing file is checked as Edit
+ * against the text it replaces, so comments it keeps are not reported as new.
+ * An `edit` may carry `oldString`/`newString` or an `edits` array (camelCase
+ * or snake_case). The checker reads `content` for
  * Write, `old_string`/`new_string` for Edit, and snake_case `edits` for MultiEdit.
  */
 function planCommentCheck(pendingCall: PendingCall): CommentCheckPlan {
@@ -68,6 +70,18 @@ function planCommentCheck(pendingCall: PendingCall): CommentCheckPlan {
         edits,
       },
       shouldCheck: editsHaveNewComments(edits),
+    }
+  }
+
+  if (!hasPair && pendingCall.content !== undefined && pendingCall.previousContent !== undefined) {
+    return {
+      toolName: "Edit",
+      toolInput: {
+        file_path: pendingCall.filePath,
+        old_string: pendingCall.previousContent,
+        new_string: pendingCall.content,
+      },
+      shouldCheck: hasNewCommentsOnly(pendingCall.previousContent, pendingCall.content),
     }
   }
 

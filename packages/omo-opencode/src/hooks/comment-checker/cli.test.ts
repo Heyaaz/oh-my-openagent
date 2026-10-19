@@ -271,6 +271,38 @@ exit /b 2
       expect(result.output).toContain("AGENT MEMO COMMENT DETECTED")
     })
 
+    test("#given a write over an existing file that keeps its comments #when processed #then the checker is not run", async () => {
+      // given
+      const previousContent = "// SPDX-License-Identifier: MIT\n/** Adds two numbers. */\nexport const sum = (a: number, b: number) => a - b\n"
+      const content = "// SPDX-License-Identifier: MIT\n/** Adds two numbers. */\nexport const sum = (a: number, b: number) => a + b\n"
+      const call = pendingCall({ tool: "write", sessionID: "ses-write-overwrite-kept", content, previousContent })
+
+      // when
+      const result = await runCheck(call)
+
+      // then
+      expect(result.hookInputs).toHaveLength(0)
+      expect(result.output).toBe("Success")
+    })
+
+    test("#given a write over an existing file that adds a comment #when processed #then the checker runs as Edit against the old file text", async () => {
+      // given
+      const previousContent = "// SPDX-License-Identifier: MIT\nexport const sum = (a: number, b: number) => a - b\n"
+      const content = "// SPDX-License-Identifier: MIT\n// Changed to return the sum instead of the difference\nexport const sum = (a: number, b: number) => a + b\n"
+      const call = pendingCall({ tool: "write", sessionID: "ses-write-overwrite-new", content, previousContent })
+
+      // when
+      const result = await runCheck(call)
+
+      // then
+      expect(result.hookInputs).toHaveLength(1)
+      expect(result.hookInputs[0]?.tool_name).toBe("Edit")
+      expect(result.hookInputs[0]?.tool_input.old_string).toBe(previousContent)
+      expect(result.hookInputs[0]?.tool_input.new_string).toBe(content)
+      expect(result.hookInputs[0]?.tool_input.content).toBeUndefined()
+      expect(result.output).toContain("AGENT MEMO COMMENT DETECTED")
+    })
+
     test("#given write content without a comment #when processed #then the checker is not run", async () => {
       // given
       const call = pendingCall({

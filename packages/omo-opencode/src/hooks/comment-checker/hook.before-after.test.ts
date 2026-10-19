@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 const hookModulePath = "./hook?before-after"
 const hookModule: typeof import("./hook") = await import(hookModulePath)
@@ -53,6 +56,60 @@ describe("comment-checker mutation tool routing", () => {
       undefined,
       expect.any(Function),
     )
+  })
+
+  it("#given write tool over an existing file #when before and after hooks run #then it records the file text being replaced", async () => {
+    // given
+    const dir = mkdtempSync(join(tmpdir(), "comment-checker-write-"))
+    const filePath = join(dir, "existing.ts")
+    const previousContent = "// SPDX-License-Identifier: MIT\nconst a = 1\n"
+    writeFileSync(filePath, previousContent)
+    const hooks = createCommentCheckerHooks(undefined, cliRunner)
+    const input = { tool: "write", sessionID: "ses_test", callID: "call_write_existing" }
+
+    try {
+      // when
+      await hooks["tool.execute.before"](input, {
+        args: { filePath, content: "// SPDX-License-Identifier: MIT\nconst a = 2\n" },
+      })
+      await hooks["tool.execute.after"](input, { title: "ok", output: "Success", metadata: {} })
+
+      // then
+      expect(processWithCli).toHaveBeenCalledTimes(1)
+      expect(processWithCli).toHaveBeenCalledWith(
+        input,
+        expect.objectContaining({ filePath, previousContent, tool: "write" }),
+        expect.any(Object),
+        "/tmp/fake-comment-checker",
+        undefined,
+        expect.any(Function),
+      )
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it("#given write tool for a new file #when before and after hooks run #then no previous text is recorded", async () => {
+    // given
+    const dir = mkdtempSync(join(tmpdir(), "comment-checker-write-"))
+    const filePath = join(dir, "new.ts")
+    const hooks = createCommentCheckerHooks(undefined, cliRunner)
+    const input = { tool: "write", sessionID: "ses_test", callID: "call_write_new" }
+
+    try {
+      // when
+      await hooks["tool.execute.before"](input, {
+        args: { filePath, content: "// write comment\nconst a = 1\n" },
+      })
+      await hooks["tool.execute.after"](input, { title: "ok", output: "Success", metadata: {} })
+
+      // then
+      expect(processWithCli).toHaveBeenCalledTimes(1)
+      const pendingCall = (processWithCli.mock.calls[0] as unknown[] | undefined)?.[1] as Record<string, unknown> | undefined
+      expect(pendingCall?.previousContent).toBeUndefined()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it("#given edit tool with file_path #when before and after hooks run #then it checks the pending edit", async () => {
