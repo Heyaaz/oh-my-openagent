@@ -1,7 +1,13 @@
 /// <reference types="bun-types" />
 
 import { describe, expect, test } from "bun:test"
-import { getOutputLimitStop } from "./output-limit-stop"
+import {
+  AssistantTurnFinishTracker,
+  formatOutputLimitError,
+  formatOutputLimitNote,
+  getLatestAssistantTurn,
+  getOutputLimitStop,
+} from "./output-limit-stop"
 
 const LENGTH_TURN = {
   info: {
@@ -29,7 +35,8 @@ describe("getOutputLimitStop", () => {
     const result = getOutputLimitStop(messages)
 
     // then
-    expect(result).toBe("stopped at output limit (32000 tokens), no result")
+    expect(result).toEqual({ messageID: undefined, outputTokens: 32000, hasResult: false })
+    expect(result && formatOutputLimitError(result)).toBe("stopped at output limit (32000 tokens), no result")
   })
 
   test("#given finish is absent and the last step-finish reason is length #when read #then it still reports the stop", () => {
@@ -43,7 +50,7 @@ describe("getOutputLimitStop", () => {
     const result = getOutputLimitStop(messages)
 
     // then
-    expect(result).toBe("stopped at output limit (32000 tokens), no result")
+    expect(result).toEqual({ messageID: undefined, outputTokens: 32000, hasResult: false })
   })
 
   test("#given the capped turn still delivered text #when read #then the stop omits the no-result clause", () => {
@@ -57,7 +64,22 @@ describe("getOutputLimitStop", () => {
     const result = getOutputLimitStop(messages)
 
     // then
-    expect(result).toBe("stopped at output limit")
+    expect(result?.hasResult).toBe(true)
+    expect(result && formatOutputLimitNote(result)).toBe("output was cut at the output limit")
+  })
+
+  test("#given the capped turn only produced reasoning #when read #then it has no result", () => {
+    // given
+    const messages = [{
+      info: { role: "assistant", finish: "length", tokens: { output: 32000 } },
+      parts: [{ type: "reasoning", text: "thinking about the rewrite" }],
+    }]
+
+    // when
+    const result = getOutputLimitStop(messages)
+
+    // then
+    expect(result?.hasResult).toBe(false)
   })
 
   test("#given a later assistant turn finished normally #when read #then an earlier length stop is ignored", () => {
@@ -97,5 +119,42 @@ describe("getOutputLimitStop", () => {
 
     // then
     expect(result).toBeUndefined()
+  })
+
+  test("#given the latest assistant turn has an id #when its finish is read #then the turn records whether it hit the cap", () => {
+    // given
+    const messages = [{ info: { id: "msg_1", role: "assistant", finish: "length" }, parts: [] }]
+
+    // when
+    const turn = getLatestAssistantTurn(messages)
+
+    // then
+    expect(turn).toEqual({ messageID: "msg_1", stoppedOnLength: true })
+  })
+})
+
+describe("AssistantTurnFinishTracker", () => {
+  test("#given a capped turn #when a newer assistant turn starts #then the old stop is replaced", () => {
+    // given
+    const tracker = new AssistantTurnFinishTracker()
+    tracker.recordMessageUpdated("ses", { id: "msg_1", role: "assistant", finish: "length" })
+
+    // when
+    tracker.recordMessageUpdated("ses", { id: "msg_2", role: "assistant" })
+
+    // then
+    expect(tracker.get("ses")).toEqual({ messageID: "msg_2", stoppedOnLength: false })
+  })
+
+  test("#given a capped turn #when the same message updates without a finish #then the stop is kept", () => {
+    // given
+    const tracker = new AssistantTurnFinishTracker()
+    tracker.recordMessageUpdated("ses", { id: "msg_1", role: "assistant", finish: "length" })
+
+    // when
+    tracker.recordMessageUpdated("ses", { id: "msg_1", role: "assistant" })
+
+    // then
+    expect(tracker.get("ses")?.stoppedOnLength).toBe(true)
   })
 })
